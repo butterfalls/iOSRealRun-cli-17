@@ -7,6 +7,7 @@ automatically run the route
 import math
 import time
 import random
+import asyncio
 
 from geopy.distance import geodesic
 
@@ -153,3 +154,30 @@ def run(dvt, loc: list, v, d=15):
         vRand = 1000/(1000/v-(2*random.random()-1)*d)
         run1(dvt, loc, vRand)
         print("跑完一圈了")
+
+
+async def run1_async(location_simulation, loc: list, v, dt=0.2, stop_event=None):
+    fixedLoc = fixLockT(loc, v, dt)
+    nList = (5, 6, 7, 8, 9)
+    n = nList[random.randint(0, len(nList)-1)]
+    fixedLoc = randLoc(fixedLoc, n=n)
+    for i in fixedLoc:
+        if stop_event is not None and stop_event.is_set():
+            break
+        await location.set_location(location_simulation, **bd09Towgs84(i))
+        if stop_event is None:
+            await asyncio.sleep(dt)
+        else:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=dt)
+            except asyncio.TimeoutError:
+                pass
+
+
+async def run_async(location_simulation, loc: list, v, d=15, stop_event=None):
+    random.seed(time.time())
+    while stop_event is None or not stop_event.is_set():
+        vRand = 1000/(1000/v-(2*random.random()-1)*d)
+        await run1_async(location_simulation, loc, vRand, stop_event=stop_event)
+        if stop_event is None or not stop_event.is_set():
+            print("跑完一圈了")

@@ -1,55 +1,75 @@
-import logging
-import multiprocessing
+import asyncio
+import subprocess
+import sys
 
-from pymobiledevice3.lockdown import create_using_usbmux, LockdownClient
+import requests
 
-from pymobiledevice3.cli.remote import install_driver_if_required
-from pymobiledevice3.cli.remote import select_device, RemoteServiceDiscoveryService
-from pymobiledevice3.cli.remote import start_tunnel
-from pymobiledevice3.cli.remote import verify_tunnel_imports
-
+from pymobiledevice3.exceptions import NoDeviceConnectedError, TunneldConnectionError
+from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.services.amfi import AmfiService
+from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS, get_tunneld_device_by_udid
 
-from pymobiledevice3.exceptions import NoDeviceConnectedError
 
-def get_usbmux_lockdownclient():
+async def get_usbmux_lockdownclient():
     while True:
         try:
-            lockdown = create_using_usbmux()
+            lockdown = await create_using_usbmux()
         except NoDeviceConnectedError:
             print("请连接设备后按回车...")
             input()
         else:
             break
+
+    while lockdown.all_values.get("PasswordProtected"):
+        await lockdown.close()
+        print("请解锁设备后按回车...")
+        input()
+        lockdown = await create_using_usbmux()
+
+    return lockdown
+
+
+def get_version(lockdown):
+    return lockdown.product_version
+
+
+async def get_developer_mode_status(lockdown):
+    return await lockdown.get_developer_mode_status()
+
+
+async def reveal_developer_mode(lockdown):
+    await AmfiService(lockdown).reveal_developer_mode_option_in_ui()
+
+
+def start_tunneld_if_needed():
+    try:
+        requests.get(f"http://{TUNNELD_DEFAULT_ADDRESS[0]}:{TUNNELD_DEFAULT_ADDRESS[1]}", timeout=0.5)
+        return
+    except requests.RequestException:
+        pass
+
+    subprocess.run(
+        [sys.executable, "-m", "pymobiledevice3", "remote", "tunneld", "--daemonize"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+async def get_tunneld_rsd(udid: str, timeout=20):
+    deadline = asyncio.get_running_loop().time() + timeout
+    start_tunneld_if_needed()
+
     while True:
-        lockdown = create_using_usbmux()
-        if lockdown.all_values.get("PasswordProtected"):
-            print("请解锁设备后按回车...")
-            input()
-        else:
-            break
-    return create_using_usbmux()
+        try:
+            rsd = await get_tunneld_device_by_udid(udid)
+        except TunneldConnectionError:
+            rsd = None
 
-def get_version(lockdown: LockdownClient):
-    return lockdown.all_values.get("ProductVersion")
+        if rsd is not None:
+            return rsd
 
-def get_developer_mode_status(lockdown: LockdownClient):
-    return lockdown.developer_mode_status
+        if asyncio.get_running_loop().time() >= deadline:
+            raise NoDeviceConnectedError("未能通过 tunneld 建立 iOS Remote Service Discovery 连接")
 
-def reveal_developer_mode(lockdown: LockdownClient):
-    AmfiService(lockdown).create_amfi_show_override_path_file()
-
-def enable_developer_mode(lockdown: LockdownClient):
-    AmfiService(lockdown).enable_developer_mode()
-
-def get_serverrsd():
-    install_driver_if_required()
-    if not verify_tunnel_imports():
-        exit(1)
-    return select_device(None)
-
-
-async def tunnel(rsd: RemoteServiceDiscoveryService, queue: multiprocessing.Queue):
-    async with start_tunnel(rsd, None) as tunnel_result:
-        queue.put((tunnel_result.address, tunnel_result.port))
-        await tunnel_result.client.wait_closed()
+        await asyncio.sleep(1)

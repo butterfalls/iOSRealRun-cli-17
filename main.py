@@ -1,15 +1,15 @@
-import signal
 import logging
 import coloredlogs
 import os
+import asyncio
+import signal
 
-from driver import location
+from driver import connect, location
 
-from pymobiledevice3.cli.remote import RemoteServiceDiscoveryService
-from pymobiledevice3.cli.developer import DvtSecureSocketProxyService
+from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 
 from init import init
-from init import tunnel
 from init import route
 
 import run
@@ -34,7 +34,7 @@ logging.getLogger('urllib3.connectionpool').setLevel(logging.DEBUG if debug else
 
 
 
-def main():
+async def main():
     # set level
     logger = logging.getLogger(__name__)
     coloredlogs.install(level=logging.INFO)
@@ -43,51 +43,38 @@ def main():
         logger.setLevel(logging.DEBUG)
         coloredlogs.install(level=logging.DEBUG)
 
-    init.init()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+
+    device = await init.init()
     logger.info("init done")
 
-    # start the tunnel in another process
-    logger.info("starting tunnel")
-    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    process, address, port = tunnel.tunnel()
-    signal.signal(signal.SIGINT, original_sigint_handler)
-    logger.info("tunnel started")
+    logger.info("connecting to tunneld")
+    rsd = await connect.get_tunneld_rsd(device["udid"])
+    logger.info("tunneld connected")
     try:
-        logger.debug(f"tunnel address: {address}, port: {port}")
-
         # get route
         loc = route.get_route()
         logger.info(f"got route from {config.config.routeConfig}")
 
-
-        with RemoteServiceDiscoveryService((address, port)) as rsd:
-            with DvtSecureSocketProxyService(rsd) as dvt:
+        async with DvtProvider(rsd) as dvt:
+            async with LocationSimulation(dvt) as location_simulation:
+                print(f"已开始模拟跑步，速度大约为 {config.config.v} m/s")
+                print("会无限循环，按 Ctrl+C 退出")
+                print("请勿直接关闭窗口，否则无法还原正常定位")
                 try:
-                    print(f"已开始模拟跑步，速度大约为 {config.config.v} m/s")
-                    print("会无限循环，按 Ctrl+C 退出")
-                    print("请勿直接关闭窗口，否则无法还原正常定位")
-                    run.run(dvt, loc, config.config.v)
-                except KeyboardInterrupt:
-                    logger.debug("get KeyboardInterrupt (inner)")
-                    logger.debug(f"Is process alive? {process.is_alive()}")
+                    await run.run_async(location_simulation, loc, config.config.v, stop_event=stop_event)
                 finally:
-                    logger.debug(f"Is process alive? {process.is_alive()}")
                     logger.debug("Start to clear location")
-                    location.clear_location(dvt)
+                    await location.clear_location(location_simulation)
                     logger.info("Location cleared")
-
-
-    except KeyboardInterrupt:
-        logger.debug("get KeyboardInterrupt (outer)")
     finally:
-        # stop the tunnel process
-        logger.debug(f"Is process alive? {process.is_alive()}")
-        logger.debug("terminating tunnel process")
-        process.terminate()
-        logger.info("tunnel process terminated")
+        await rsd.close()
         print("Bye")
     
 
     
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
