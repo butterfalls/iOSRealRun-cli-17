@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=iOSRealRun
+Comment=Start iOSRealRun with USB recovery checks
+Terminal=true
+Exec=/home/butterfalls/iOSRealRun/iOSRealRun-cli-17/scripts/start-ios-realrun-and-wait.sh
+Icon=utilities-terminal
+Categories=Utility;
+StartupNotify=false
