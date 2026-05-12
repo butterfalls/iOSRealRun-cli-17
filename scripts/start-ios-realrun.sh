@@ -14,6 +14,9 @@ sudo -v
 # GNOME may grab iPhone as a camera and prevent usbmuxd from talking to lockdownd.
 pkill -f "gvfsd-gphoto2" 2>/dev/null || true
 
+# Drop stale tunneld instances. They can keep serving an empty device list after usbmuxd restarts.
+sudo pkill -9 -f "[p]ymobiledevice3 remote tunneld" 2>/dev/null || true
+
 if ! timeout 8 sudo systemctl restart usbmuxd; then
     sudo systemctl kill usbmuxd 2>/dev/null || true
     sudo systemctl reset-failed usbmuxd 2>/dev/null || true

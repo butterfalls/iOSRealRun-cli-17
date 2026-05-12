@@ -43,11 +43,18 @@ async def reveal_developer_mode(lockdown):
 
 def start_tunneld_if_needed():
     try:
-        requests.get(f"http://{TUNNELD_DEFAULT_ADDRESS[0]}:{TUNNELD_DEFAULT_ADDRESS[1]}", timeout=0.5)
-        return
+        response = requests.get(f"http://{TUNNELD_DEFAULT_ADDRESS[0]}:{TUNNELD_DEFAULT_ADDRESS[1]}", timeout=0.5)
+        if response.json():
+            return
     except requests.RequestException:
         pass
 
+    subprocess.run(
+        ["pkill", "-9", "-f", "[p]ymobiledevice3 remote tunneld"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     subprocess.run(
         [sys.executable, "-m", "pymobiledevice3", "remote", "tunneld", "--daemonize"],
         check=False,
@@ -56,7 +63,7 @@ def start_tunneld_if_needed():
     )
 
 
-async def get_tunneld_rsd(udid: str, timeout=20):
+async def get_tunneld_rsd(udid: str, timeout=45):
     deadline = asyncio.get_running_loop().time() + timeout
     start_tunneld_if_needed()
 
