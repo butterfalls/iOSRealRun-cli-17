@@ -3,6 +3,7 @@ import logging
 import coloredlogs
 import os
 
+import console_utils
 from driver import location
 
 from pymobiledevice3.cli.remote import RemoteServiceDiscoveryService
@@ -42,6 +43,7 @@ def main():
     if debug:
         logger.setLevel(logging.DEBUG)
         coloredlogs.install(level=logging.DEBUG)
+    console_utils.disable_quick_edit(logger)
 
     init.init()
     logger.info("init done")
@@ -62,18 +64,30 @@ def main():
 
         with RemoteServiceDiscoveryService((address, port)) as rsd:
             with DvtSecureSocketProxyService(rsd) as dvt:
+                location_simulation = location.create_simulation(dvt)
+                if config.config.lowPriority:
+                    console_utils.set_below_normal_priority(logger)
                 try:
                     print(f"已开始模拟跑步，速度大约为 {config.config.v} m/s")
                     print("会无限循环，按 Ctrl+C 退出")
                     print("请勿直接关闭窗口，否则无法还原正常定位")
-                    run.run(dvt, loc, config.config.v)
+                    run.run(
+                        location_simulation,
+                        loc,
+                        config.config.v,
+                        dt=config.config.locationUpdateInterval,
+                        min_distance=config.config.minLocationDistance,
+                        randomize=config.config.randomizeRoute,
+                        cache_route=config.config.cacheRoute,
+                        speed_variation=config.config.speedVariation,
+                    )
                 except KeyboardInterrupt:
                     logger.debug("get KeyboardInterrupt (inner)")
                     logger.debug(f"Is process alive? {process.is_alive()}")
                 finally:
                     logger.debug(f"Is process alive? {process.is_alive()}")
                     logger.debug("Start to clear location")
-                    location.clear_location(dvt)
+                    location.clear_location(location_simulation)
                     logger.info("Location cleared")
 
 

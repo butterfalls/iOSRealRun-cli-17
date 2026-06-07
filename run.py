@@ -12,6 +12,49 @@ from geopy.distance import geodesic
 
 from driver import location
 
+
+def sleep_until(next_tick, now=time.monotonic, sleep=time.sleep):
+    current = now()
+    remaining = next_tick - current
+    if remaining > 0:
+        sleep(remaining)
+        return next_tick
+    return current
+
+
+def prepare_route_points(loc: list, v, dt, randomize=True):
+    fixed_loc = fixLockT(loc, v, dt)
+    if randomize:
+        n_list = (5, 6, 7, 8, 9)
+        n = n_list[random.randint(0, len(n_list)-1)]
+        fixed_loc = randLoc(fixed_loc, n=n)
+    return [bd09Towgs84(point) for point in fixed_loc]
+
+
+def should_send_location(point, previous_point, min_distance):
+    if previous_point is None or min_distance <= 0:
+        return True
+    return geodistance(previous_point, point) >= min_distance
+
+
+def run_prepared_lap(
+    location_simulation,
+    points,
+    dt,
+    min_distance=0.0,
+    set_location=location.set_simulated_location,
+    now=time.monotonic,
+    sleep=time.sleep,
+):
+    clock = now()
+    previous_sent = None
+    for point in points:
+        if should_send_location(point, previous_sent, min_distance):
+            set_location(location_simulation, **point)
+            previous_sent = point
+        clock = sleep_until(clock + dt, now=now, sleep=sleep)
+
+
 def bd09Towgs84(position):
     wgs_p = {}
 
@@ -135,21 +178,33 @@ def fixLockT(loc: list, v, dt):
     return fixedLoc
 
 def run1(dvt, loc: list, v, dt=0.2):
-    fixedLoc = fixLockT(loc, v, dt)
-    nList = (5, 6, 7, 8, 9)
-    n = nList[random.randint(0, len(nList)-1)]
-    fixedLoc = randLoc(fixedLoc, n=n)  # a path will be divided into n parts for random route
-    clock = time.time()
-    for i in fixedLoc:
-        # utils.setLoc(bd09Towgs84(i))
-        location.set_location(dvt, **bd09Towgs84(i))
-        while time.time()-clock < dt:
-            pass
-        clock = time.time()
+    points = prepare_route_points(loc, v, dt)
+    run_prepared_lap(dvt, points, dt)
 
-def run(dvt, loc: list, v, d=15):
+def run(
+    dvt,
+    loc: list,
+    v,
+    d=None,
+    dt=0.2,
+    min_distance=0.0,
+    randomize=True,
+    cache_route=False,
+    speed_variation=15,
+    run_lap=run_prepared_lap,
+):
     random.seed(time.time())
+    if d is not None:
+        speed_variation = d
+    cached_points = None
+    can_cache = cache_route and not randomize and speed_variation == 0
     while True:
-        vRand = 1000/(1000/v-(2*random.random()-1)*d)
-        run1(dvt, loc, vRand)
+        vRand = v if speed_variation == 0 else 1000/(1000/v-(2*random.random()-1)*speed_variation)
+        if can_cache and cached_points is not None:
+            points = cached_points
+        else:
+            points = prepare_route_points(loc, vRand, dt, randomize)
+            if can_cache:
+                cached_points = points
+        run_lap(dvt, points, dt=dt, min_distance=min_distance)
         print("跑完一圈了")

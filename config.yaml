@@ -2,3 +2,9 @@ v: 3.5
 routeConfig: "HNroute.txt"
 libimobiledeviceDir: "libimobiledevice"
 imageDir: "DeveloperDiskImage"
+locationUpdateInterval: 0.5
+minLocationDistance: 1.0
+randomizeRoute: false
+cacheRoute: true
+speedVariation: 0.0
+lowPriority: true
